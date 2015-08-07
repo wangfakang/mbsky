@@ -53,74 +53,76 @@
 
 <p>昨天所说的惊群含义是指:   </p>
 
-<pre><code>   当一个请求来到的时候,多个work进程的epoll注册监听端口都发生了可读事件,此时多个work进程都会去执行accept系统调用但最终
-只有一个 work进程accept执行成功,造成了没有必要的上下文切换(这里的accept操作可以更深层次的"唤醒",此处所说的"唤醒"不是说
-开始work进程都挂起的,然后把其唤醒,其实work进程几乎一直都是工作的如:处理一些之前已经建立好的一些网络事件).
-</code></pre>
+<ul>
+<li>当一个请求来到的时候,多个work进程的epoll注册监听端口都发生了可读事件,此时多个work进程都会去执行accept系统调用但最
+终只有一个work进程accept执行成功,造成了没有必要的上下文切换(这里的accept操作可以更深层次的"唤醒",此处所说的"唤醒"不是
+说开始work进程都挂起的,然后把其唤醒,其实work进程几乎一直都是工作的如:处理一些之前已经建立好的一些网络事件).</li>
+</ul>
 
 <h3>
-<a id="二此时nginx解决惊群是这样的" class="anchor" href="#%E4%BA%8C%E6%AD%A4%E6%97%B6nginx%E8%A7%A3%E5%86%B3%E6%83%8A%E7%BE%A4%E6%98%AF%E8%BF%99%E6%A0%B7%E7%9A%84" aria-hidden="true"><span class="octicon octicon-link"></span></a>二.此时nginx解决惊群是这样的</h3>
+<a id="二nginx是解决惊群" class="anchor" href="#%E4%BA%8Cnginx%E6%98%AF%E8%A7%A3%E5%86%B3%E6%83%8A%E7%BE%A4" aria-hidden="true"><span class="octicon octicon-link"></span></a>二.nginx是解决惊群</h3>
 
-<pre><code>    增加了一个"accept_mutex"锁,当其当前work进程抢到锁了才会去把监听端口的文件描述符加载到自己的epoll中,其他没有抢到的w
+<ul>
+<li>增加了一个"accept_mutex"锁,当其当前work进程抢到锁了才会去把监听端口的文件描述符加载到自己的epoll中,其他没有抢到的w
 ork进程会把之前所注册的相应端口的事件全部删除,此时会处理之前建立连接上的一些网络事件.即"在同一个时刻只会有一个work进程
-会在epoll中注册监听端口的描述符,每一个work进程都共享该监听端口描述符".
-
-</code></pre>
+会在epoll中注册监听端口的描述符,每一个work进程都共享该监听端口描述符".</li>
+</ul>
 
 <h3>
-<a id="三还有一个问题就是" class="anchor" href="#%E4%B8%89%E8%BF%98%E6%9C%89%E4%B8%80%E4%B8%AA%E9%97%AE%E9%A2%98%E5%B0%B1%E6%98%AF" aria-hidden="true"><span class="octicon octicon-link"></span></a>三.还有一个问题就是</h3>
+<a id="三获得的锁何时释放" class="anchor" href="#%E4%B8%89%E8%8E%B7%E5%BE%97%E7%9A%84%E9%94%81%E4%BD%95%E6%97%B6%E9%87%8A%E6%94%BE" aria-hidden="true"><span class="octicon octicon-link"></span></a>三.获得的锁何时释放</h3>
 
-<pre><code>    "抢到的锁何时释放",nginx是这样做的:使用了两个事件队列(ngx_posted_accept_events:可以理解为存放新建连接的事件,然后
-ngx_posted_events:存放处理建立连接的事件),其实释放锁的地方就是:把新来的连接取出已经完成了三次握手了(此时把该事件放到ng
-x_posted_events)然后就会释放锁.      
-    锁释放了此时在处理ngx_posted_events(已经建立好连接的相关网络事件)上的事件,这样就可以让下次新的连接可以得到更快的
-处理,后面再来新的连接的时候继续按照前面的处理方式处理.    
-    注意:nginx的监听是采用的epoll的LT模式,有这样一个场景,就是当在处理新建连接中此时如果有一个新的请求又来了,由于监听
-用epoll默认的模式(EPOLLT),所以新的请求被阻塞到监听套接口上,此时等释放了锁后其它进程取到了锁后会处理监听套接口上的连接.
-
-</code></pre>
+<ul>
+<li>抢到的锁何时释放,nginx是这样做的:使用了两个事件队列(ngx_posted_accept_events:可以理解为存放新建连接的事件,然后ngx_p
+osted_events:存放处理建立连接的事件),其实释放锁的地方就是:把新来的连接取出已经完成了三次握手了(此时把该事件放到ngx_pos
+ted_events)然后就会释放锁.<br>
+</li>
+<li>锁释放了此时在处理ngx_posted_events(已经建立好连接的相关网络事件)上的事件,这样就可以让下次新的连接可以得到更快的处理,后面再来新的连接的时候继续按照前面的处理方式处理.<br>
+</li>
+<li>注意:nginx的监听是采用的epoll的LT模式,有这样一个场景,就是当在处理新建连接中此时如果有一个新的请求又来了,由于监听
+用epoll默认的模式(EPOLLT),所以新的请求被阻塞到监听套接口上,此时等释放了锁后其它进程取到了锁后会处理监听套接口上的连接.</li>
+</ul>
 
 <h3>
 <a id="四代码解析" class="anchor" href="#%E5%9B%9B%E4%BB%A3%E7%A0%81%E8%A7%A3%E6%9E%90" aria-hidden="true"><span class="octicon octicon-link"></span></a>四.代码解析</h3>
 
-<pre><code>    void
-    ngx_process_events_and_timers(ngx_cycle_t *cycle)
+<div class="highlight highlight-c"><pre>    <span class="pl-k">void</span>
+    <span class="pl-en">ngx_process_events_and_timers</span>(<span class="pl-c1">ngx_cycle_t</span> *cycle)
     {
-    ngx_uint_t  flags;
-    ngx_msec_t  timer, delta;
+    <span class="pl-c1">ngx_uint_t</span>  flags;
+    <span class="pl-c1">ngx_msec_t</span>  timer, delta;
 
-    if (ngx_timer_resolution) {
+    <span class="pl-k">if</span> (ngx_timer_resolution) {
         timer = NGX_TIMER_INFINITE;
-        flags = 0;
+        flags = <span class="pl-c1">0</span>;
 
-    } else {
-        timer = ngx_event_find_timer();
+    } <span class="pl-k">else</span> {
+        timer = <span class="pl-c1">ngx_event_find_timer</span>();
         flags = NGX_UPDATE_TIME;
 
-    #if (NGX_THREADS)
+    #<span class="pl-k">if</span> (NGX_THREADS)
 
-        if (timer == NGX_TIMER_INFINITE || timer &gt; 500) {
-            timer = 500;
+        <span class="pl-k">if</span> (timer == NGX_TIMER_INFINITE || timer &gt; <span class="pl-c1">500</span>) {
+            timer = <span class="pl-c1">500</span>;
         }
 
-    #endif
+    #<span class="pl-k">endif</span>
     }
 
-    if (ngx_use_accept_mutex) {
-        //表示当前进程的负载超过了最大连接数的7/8
-        if (ngx_accept_disabled &gt; 0) {
+    <span class="pl-k">if</span> (ngx_use_accept_mutex) {
+        <span class="pl-c">//表示当前进程的负载超过了最大连接数的7/8</span>
+        <span class="pl-k">if</span> (ngx_accept_disabled &gt; <span class="pl-c1">0</span>) {
             ngx_accept_disabled--;
 
-        } else {
-            if (ngx_trylock_accept_mutex(cycle) == NGX_ERROR) {
-                return;
+        } <span class="pl-k">else</span> {
+            <span class="pl-k">if</span> (<span class="pl-c1">ngx_trylock_accept_mutex</span>(cycle) == NGX_ERROR) {
+                <span class="pl-k">return</span>;
             }
 
-            if (ngx_accept_mutex_held) {
+            <span class="pl-k">if</span> (ngx_accept_mutex_held) {
                 flags |= NGX_POST_EVENTS;
 
-            } else {// 不让其平凡的获取到锁   
-                if (timer == NGX_TIMER_INFINITE
+            } <span class="pl-k">else</span> {<span class="pl-c">// 不让其平凡的获取到锁   </span>
+                <span class="pl-k">if</span> (timer == NGX_TIMER_INFINITE
                     || timer &gt; ngx_accept_mutex_delay)
                 {
                     timer = ngx_accept_mutex_delay;
@@ -131,82 +133,81 @@ x_posted_events)然后就会释放锁.
 
     delta = ngx_current_msec;
 
-    (void) ngx_process_events(cycle, timer, flags);
+    (<span class="pl-k">void</span>) <span class="pl-c1">ngx_process_events</span>(cycle, timer, flags);
 
     delta = ngx_current_msec - delta;
 
-    ngx_log_debug1(NGX_LOG_DEBUG_EVENT, cycle-&gt;log, 0,
-                   "timer delta: %M", delta);
-    //处理新来的事件建立连接
-    if (ngx_posted_accept_events) {
-        ngx_event_process_posted(cycle, &amp;ngx_posted_accept_events);
+    <span class="pl-c1">ngx_log_debug1</span>(NGX_LOG_DEBUG_EVENT, cycle-&gt;<span class="pl-c1">log</span>, <span class="pl-c1">0</span>,
+                   <span class="pl-s"><span class="pl-pds">"</span>timer delta: <span class="pl-ii">%</span>M<span class="pl-pds">"</span></span>, delta);
+    <span class="pl-c">//处理新来的事件建立连接</span>
+    <span class="pl-k">if</span> (ngx_posted_accept_events) {
+        <span class="pl-c1">ngx_event_process_posted</span>(cycle, &amp;ngx_posted_accept_events);
     }
-    //处理完了就把其锁给释放了,让其新的连接可以被其尽快处理
-    if (ngx_accept_mutex_held) {
-        ngx_shmtx_unlock(&amp;ngx_accept_mutex);
-    }
-
-    if (delta) {
-        ngx_event_expire_timers();
+    <span class="pl-c">//处理完了就把其锁给释放了,让其新的连接可以被其尽快处理</span>
+    <span class="pl-k">if</span> (ngx_accept_mutex_held) {
+        <span class="pl-c1">ngx_shmtx_unlock</span>(&amp;ngx_accept_mutex);
     }
 
-    ngx_log_debug1(NGX_LOG_DEBUG_EVENT, cycle-&gt;log, 0,
-                   "posted events %p", ngx_posted_events);
-    //锁释放了才处理已经建立好的事件(已经完成了三次握手的事件)
-    if (ngx_posted_events) {
-        if (ngx_threaded) {
-            ngx_wakeup_worker_thread(cycle);
+    <span class="pl-k">if</span> (delta) {
+        <span class="pl-c1">ngx_event_expire_timers</span>();
+    }
 
-        } else {
-            ngx_event_process_posted(cycle, &amp;ngx_posted_events);
+    <span class="pl-c1">ngx_log_debug1</span>(NGX_LOG_DEBUG_EVENT, cycle-&gt;<span class="pl-c1">log</span>, <span class="pl-c1">0</span>,
+                   <span class="pl-s"><span class="pl-pds">"</span>posted events <span class="pl-c1">%p</span><span class="pl-pds">"</span></span>, ngx_posted_events);
+    <span class="pl-c">//锁释放了才处理已经建立好的事件(已经完成了三次握手的事件)</span>
+    <span class="pl-k">if</span> (ngx_posted_events) {
+        <span class="pl-k">if</span> (ngx_threaded) {
+            <span class="pl-c1">ngx_wakeup_worker_thread</span>(cycle);
+
+        } <span class="pl-k">else</span> {
+            <span class="pl-c1">ngx_event_process_posted</span>(cycle, &amp;ngx_posted_events);
         }
     }
-    }
+    }</pre></div>
 
-</code></pre>
+<hr>
 
-<pre><code>    ngx_int_t
-    ngx_trylock_accept_mutex(ngx_cycle_t *cycle)
+<div class="highlight highlight-c"><pre>  <span class="pl-c1">ngx_int_t</span>
+    <span class="pl-en">ngx_trylock_accept_mutex</span>(<span class="pl-c1">ngx_cycle_t</span> *cycle)
     {
-    //获取锁操作
-    if (ngx_shmtx_trylock(&amp;ngx_accept_mutex)) {
+    <span class="pl-c">//获取锁操作</span>
+    <span class="pl-k">if</span> (<span class="pl-c1">ngx_shmtx_trylock</span>(&amp;ngx_accept_mutex)) {
 
-        ngx_log_debug0(NGX_LOG_DEBUG_EVENT, cycle-&gt;log, 0,
-                       "accept mutex locked");
-       //获取到锁，但是标志位ngx_accept_mutex_held为1，表示当前进程已经获取到锁    
-        if (ngx_accept_mutex_held
-            &amp;&amp; ngx_accept_events == 0
+        <span class="pl-c1">ngx_log_debug0</span>(NGX_LOG_DEBUG_EVENT, cycle-&gt;<span class="pl-c1">log</span>, <span class="pl-c1">0</span>,
+                       <span class="pl-s"><span class="pl-pds">"</span>accept mutex locked<span class="pl-pds">"</span></span>);
+       <span class="pl-c">//获取到锁，但是标志位ngx_accept_mutex_held为1，表示当前进程已经获取到锁    </span>
+        <span class="pl-k">if</span> (ngx_accept_mutex_held
+            &amp;&amp; ngx_accept_events == <span class="pl-c1">0</span>
             &amp;&amp; !(ngx_event_flags &amp; NGX_USE_RTSIG_EVENT))
         {
-            return NGX_OK;
+            <span class="pl-k">return</span> NGX_OK;
         }
-        //获取到锁,则将所有监听事件添加到当前的epoll等事件驱动模块中  
-        if (ngx_enable_accept_events(cycle) == NGX_ERROR) {
-            ngx_shmtx_unlock(&amp;ngx_accept_mutex);
-            return NGX_ERROR;
-        }
-
-        ngx_accept_events = 0;
-        ngx_accept_mutex_held = 1;
-
-        return NGX_OK;
-    }
-
-    ngx_log_debug1(NGX_LOG_DEBUG_EVENT, cycle-&gt;log, 0,
-                   "accept mutex lock failed: %ui", ngx_accept_mutex_held);
-    //表示此次没有获取到锁,但是上次获取到锁,此时会把当前work的epoll中删除监听的端口事件
-    if (ngx_accept_mutex_held) {
-        if (ngx_disable_accept_events(cycle) == NGX_ERROR) {
-            return NGX_ERROR;
+        <span class="pl-c">//获取到锁,则将所有监听事件添加到当前的epoll等事件驱动模块中  </span>
+        <span class="pl-k">if</span> (<span class="pl-c1">ngx_enable_accept_events</span>(cycle) == NGX_ERROR) {
+            <span class="pl-c1">ngx_shmtx_unlock</span>(&amp;ngx_accept_mutex);
+            <span class="pl-k">return</span> NGX_ERROR;
         }
 
-        ngx_accept_mutex_held = 0;
+        ngx_accept_events = <span class="pl-c1">0</span>;
+        ngx_accept_mutex_held = <span class="pl-c1">1</span>;
+
+        <span class="pl-k">return</span> NGX_OK;
     }
 
-    return NGX_OK;
+    <span class="pl-c1">ngx_log_debug1</span>(NGX_LOG_DEBUG_EVENT, cycle-&gt;<span class="pl-c1">log</span>, <span class="pl-c1">0</span>,
+                   <span class="pl-s"><span class="pl-pds">"</span>accept mutex lock failed: <span class="pl-c1">%u</span>i<span class="pl-pds">"</span></span>, ngx_accept_mutex_held);
+    <span class="pl-c">//表示此次没有获取到锁,但是上次获取到锁,此时会把当前work的epoll中删除监听的端口事件</span>
+    <span class="pl-k">if</span> (ngx_accept_mutex_held) {
+        <span class="pl-k">if</span> (<span class="pl-c1">ngx_disable_accept_events</span>(cycle) == NGX_ERROR) {
+            <span class="pl-k">return</span> NGX_ERROR;
+        }
+
+        ngx_accept_mutex_held = <span class="pl-c1">0</span>;
     }
 
-</code></pre>
+    <span class="pl-k">return</span> NGX_OK;
+    }
+</pre></div>
 
 <h2>
 <a id="有问题反馈" class="anchor" href="#%E6%9C%89%E9%97%AE%E9%A2%98%E5%8F%8D%E9%A6%88" aria-hidden="true"><span class="octicon octicon-link"></span></a>有问题反馈</h2>
