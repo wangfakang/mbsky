@@ -53,27 +53,30 @@
 
 <p>昨天所说的惊群含义是指:   </p>
 
-<pre><code>    当一个请求来到的时候,多个work进程的epoll注册监听端口都发生了可读事件,此时多个work进程都会去执行accept系统调用但
-最终只有一个 work进程accept执行成功,造成了没有必要的上下文切换(这里的accept操作可以更深层次的"唤醒",此处所说的"唤醒"
-不是说开始work进程都挂起的,然后把其唤醒,其实work进程几乎一直都是工作的如:处理一些之前已经建立好的一些网络事件).
+<pre><code>   当一个请求来到的时候,多个work进程的epoll注册监听端口都发生了可读事件,此时多个work进程都会去执行accept系统调用但最终
+只有一个 work进程accept执行成功,造成了没有必要的上下文切换(这里的accept操作可以更深层次的"唤醒",此处所说的"唤醒"不是说
+开始work进程都挂起的,然后把其唤醒,其实work进程几乎一直都是工作的如:处理一些之前已经建立好的一些网络事件).
 </code></pre>
 
 <h3>
 <a id="二此时nginx解决惊群是这样的" class="anchor" href="#%E4%BA%8C%E6%AD%A4%E6%97%B6nginx%E8%A7%A3%E5%86%B3%E6%83%8A%E7%BE%A4%E6%98%AF%E8%BF%99%E6%A0%B7%E7%9A%84" aria-hidden="true"><span class="octicon octicon-link"></span></a>二.此时nginx解决惊群是这样的</h3>
 
-<pre><code>    增加了一个"accept_mutex"锁,当其当前work进程抢到锁了才会去把监听端口的文件描述符加载到自己的epoll中,其他没有抢到      
-的work进程会把之前所注册的相应端口的事件全部删除,此时会处理之前建立连接上的一些网络事件. 即"在同一个时刻只会有一个work       
-进程会在epoll中注册监听端口的描述符,每一个work进程都共享该监听端口描述符".
+<pre><code>    增加了一个"accept_mutex"锁,当其当前work进程抢到锁了才会去把监听端口的文件描述符加载到自己的epoll中,其他没有抢到的w
+ork进程会把之前所注册的相应端口的事件全部删除,此时会处理之前建立连接上的一些网络事件.即"在同一个时刻只会有一个work进程
+会在epoll中注册监听端口的描述符,每一个work进程都共享该监听端口描述符".
 
 </code></pre>
 
 <h3>
 <a id="三还有一个问题就是" class="anchor" href="#%E4%B8%89%E8%BF%98%E6%9C%89%E4%B8%80%E4%B8%AA%E9%97%AE%E9%A2%98%E5%B0%B1%E6%98%AF" aria-hidden="true"><span class="octicon octicon-link"></span></a>三.还有一个问题就是</h3>
 
-<pre><code>     "抢到的锁何时释放",nginx是这样做的:使用了两个事件队列(ngx_posted_accept_events:可以理解存放新建连接的事件,然后 ngx_posted_events:存放已经建立连接的事件),其实释放所的地方就是:当把新来的所有连接建立好三次握手了(此时把该事件放到
-ngx_posted_events)就会释放锁. 
-     锁释放了此时在处理ngx_posted_events(已经完成了三次握手的事件)上的事件这样就可以让下次新的连接得到更快的处理,后面   
-再来新的连接的时候继续按照前面的处理方式处理. 
+<pre><code>    "抢到的锁何时释放",nginx是这样做的:使用了两个事件队列(ngx_posted_accept_events:可以理解为存放新建连接的事件,然后
+ngx_posted_events:存放处理建立连接的事件),其实释放锁的地方就是:把新来的连接取出已经完成了三次握手了(此时把该事件放到ng
+x_posted_events)然后就会释放锁.      
+    锁释放了此时在处理ngx_posted_events(已经建立好连接的相关网络事件)上的事件,这样就可以让下次新的连接可以得到更快的
+处理,后面再来新的连接的时候继续按照前面的处理方式处理.    
+    注意:nginx的监听是采用的epoll的LT模式,有这样一个场景,就是当在处理新建连接中此时如果有一个新的请求又来了,由于监听
+用epoll默认的模式(EPOLLT),所以新的请求被阻塞到监听套接口上,此时等释放了锁后其它进程取到了锁后会处理监听套接口上的连接.
 
 </code></pre>
 
@@ -237,7 +240,7 @@ ngx_posted_events)就会释放锁.
           </script>
           <script type="text/javascript">
             try {
-              var pageTracker = _gat._getTracker("update 1");
+              var pageTracker = _gat._getTracker("update file");
             pageTracker._trackPageview();
             } catch(err) {}
           </script>
