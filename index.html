@@ -80,8 +80,7 @@ ngx_posted_events)就会释放锁.
 <h3>
 <a id="四代码解析" class="anchor" href="#%E5%9B%9B%E4%BB%A3%E7%A0%81%E8%A7%A3%E6%9E%90" aria-hidden="true"><span class="octicon octicon-link"></span></a>四.代码解析</h3>
 
-<pre><code>
-    void
+<pre><code>    void
     ngx_process_events_and_timers(ngx_cycle_t *cycle)
     {
     ngx_uint_t  flags;
@@ -161,10 +160,9 @@ ngx_posted_events)就会释放锁.
     }
     }
 
-    ```
+</code></pre>
 
-    ```
-    ngx_int_t
+<pre><code>    ngx_int_t
     ngx_trylock_accept_mutex(ngx_cycle_t *cycle)
     {
     //获取锁操作
@@ -204,6 +202,7 @@ ngx_posted_events)就会释放锁.
 
     return NGX_OK;
     }
+
 </code></pre>
 
 <h2>
@@ -232,6 +231,16 @@ ngx_posted_events)就会释放锁.
       </footer>
     </div>
     <!--[if !IE]><script>fixScale(document);</script><![endif]-->
-		
+		          <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("update");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+
   </body>
 </html>
